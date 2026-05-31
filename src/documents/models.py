@@ -14,6 +14,7 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from multiselectfield import MultiSelectField
 from treenode.models import TreeNodeModel
+from pgvector.django import VectorField
 
 if settings.AUDIT_LOG_ENABLED:
     from auditlog.registry import auditlog
@@ -323,6 +324,11 @@ class Document(SoftDeleteModel, ModelWithOwner):  # type: ignore[django-manager-
     ai_summary = models.TextField( null=True, blank=True )
     ai_category = models.CharField( max_length=255, null=True, blank=True )
     ai_confidence = models.FloatField( null=True, blank=True )
+    embedding = VectorField(
+        dimensions=1536,
+        null=True,
+        blank=True
+    )
 
     version_index = models.PositiveIntegerField(
         _("version index"),

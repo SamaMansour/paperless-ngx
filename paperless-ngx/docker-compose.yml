@@ -31,7 +31,8 @@ services:
     volumes:
       - redisdata:/data
   db:
-    image: docker.io/library/postgres:18
+
+    image: pgvector/pgvector:pg18
     restart: unless-stopped
     volumes:
       - pgdata:/var/lib/postgresql
@@ -42,7 +43,9 @@ services:
       POSTGRES_USER: paperless
       POSTGRES_PASSWORD: paperless
   webserver:
-    image: ghcr.io/paperless-ngx/paperless-ngx:latest
+    build:
+      context: ..
+    image: paperless-ngx-local:latest
     restart: unless-stopped
     depends_on:
       - db
