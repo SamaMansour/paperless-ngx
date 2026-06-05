@@ -1,11 +1,37 @@
-```python
 import json
 import logging
 
 from openai import OpenAI
 
-
 logger = logging.getLogger(__name__)
+
+
+CLASSIFICATION_PROMPT_TEMPLATE = """
+You are an AI document classifier.
+
+Analyze this OCR text and return:
+- category
+- tags
+- confidence score
+- summary
+
+Return ONLY valid JSON:
+
+{{
+  "category": "category_name",
+  "tags": [
+    {{
+      "tag": "short_tag",
+      "confidence": 0.95
+    }}
+  ],
+  "confidence": 0.95,
+  "summary": "Concise document summary."
+}}
+
+Document text:
+{ocr_text}
+""".strip()
 
 
 class OpenAIService:
@@ -37,12 +63,12 @@ class OpenAIService:
             messages=[
                 {
                     "role": "system",
-                    "content": "You summarize documents."
+                    "content": "You summarize documents.",
                 },
                 {
                     "role": "user",
-                    "content": prompt
-                }
+                    "content": prompt,
+                },
             ],
             temperature=0.2,
         )
@@ -51,49 +77,22 @@ class OpenAIService:
 
     def classify_document(self, text: str) -> dict:
         """
-        Predict category + confidence score.
+        Predict category, tags, confidence score, and summary.
         """
 
-        prompt = f"""
-        You are an AI document classification system.
-
-        Analyze the document and classify it.
-
-        Possible categories:
-        - Invoice
-        - Contract
-        - Receipt
-        - Resume
-        - Medical
-        - Legal
-        - Financial
-        - Travel
-        - Identification
-        - Tax
-        - Other
-
-        Return ONLY valid JSON:
-
-        {{
-          "category": "category_name",
-          "confidence": 0.95
-        }}
-
-        Document:
-        {text}
-        """
+        prompt = CLASSIFICATION_PROMPT_TEMPLATE.format(ocr_text=text)
 
         response = self.client.chat.completions.create(
             model=self.chat_model,
             messages=[
                 {
                     "role": "system",
-                    "content": "You classify documents."
+                    "content": "You classify documents.",
                 },
                 {
                     "role": "user",
-                    "content": prompt
-                }
+                    "content": prompt,
+                },
             ],
             temperature=0,
             response_format={"type": "json_object"},
@@ -139,12 +138,12 @@ class OpenAIService:
             messages=[
                 {
                     "role": "system",
-                    "content": "You generate document tags."
+                    "content": "You generate document tags.",
                 },
                 {
                     "role": "user",
-                    "content": prompt
-                }
+                    "content": prompt,
+                },
             ],
             temperature=0.2,
             response_format={"type": "json_object"},
@@ -175,19 +174,15 @@ class OpenAIService:
 
         logger.info("Starting AI enrichment")
 
-        summary = self.generate_summary(text)
-
         classification = self.classify_document(text)
-
-        tags = self.generate_tags(text)
 
         embedding = self.generate_embedding(text)
 
         result = {
-            "summary": summary,
+            "summary": classification.get("summary"),
             "category": classification.get("category"),
             "confidence": classification.get("confidence"),
-            "tags": tags,
+            "tags": classification.get("tags", []),
             "embedding": embedding,
         }
 
