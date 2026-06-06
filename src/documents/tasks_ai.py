@@ -2,12 +2,21 @@ import logging
 
 from celery import shared_task
 from django.db import transaction
+from openai import RateLimitError
 
 from ai.services.openai_service import OpenAIService
 from documents.models import Document
 from documents.models import DocumentAITag
 
 logger = logging.getLogger("paperless.ai_tasks")
+
+
+def _is_insufficient_quota(exc: RateLimitError) -> bool:
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error", body)
+        return error.get("code") == "insufficient_quota"
+    return "insufficient_quota" in str(exc)
 
 
 def _get_tag_value(tag_data: dict | str, key: str, default=None):
@@ -58,6 +67,16 @@ def process_document_ai(self, document_id: int) -> str:
                 ],
             )
 
+    except RateLimitError as exc:
+        Document.objects.filter(pk=document.pk).update(ai_status="failed")
+        if _is_insufficient_quota(exc):
+            logger.error(
+                "AI processing failed for document %s: OpenAI quota exceeded",
+                document.pk,
+            )
+            return f"AI processing failed for document {document.pk}: quota exceeded"
+        logger.exception("AI processing failed for document %s", document.pk)
+        raise
     except Exception:
         Document.objects.filter(pk=document.pk).update(ai_status="failed")
         logger.exception("AI processing failed for document %s", document.pk)

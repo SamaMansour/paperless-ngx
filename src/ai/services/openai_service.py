@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 
 from openai import OpenAI
 
@@ -15,19 +16,15 @@ Analyze this OCR text and return:
 - confidence score
 - summary
 
-Return ONLY valid JSON:
+Return ONLY valid JSON with these keys:
+- "category": a concrete document category such as "Invoice", "Receipt",
+  "Contract", "Medical", "Legal", "Tax", "Identification", or "Other"
+- "tags": 3 to 8 lowercase tags, each as an object with "tag" and "confidence"
+- "confidence": a number from 0 to 1 for the overall classification
+- "summary": a concise summary of the actual document text
 
-{{
-  "category": "category_name",
-  "tags": [
-    {{
-      "tag": "short_tag",
-      "confidence": 0.95
-    }}
-  ],
-  "confidence": 0.95,
-  "summary": "Concise document summary."
-}}
+Do not return placeholder values. Do not copy these instructions into the
+answer.
 
 Document text:
 {ocr_text}
@@ -36,11 +33,34 @@ Document text:
 
 class OpenAIService:
     def __init__(self):
-        self.client = OpenAI()
+        self.provider = os.getenv("AI_PROVIDER", "openai").lower()
+        if self.provider == "ollama":
+            self.client = OpenAI(
+                base_url=os.getenv("OLLAMA_BASE_URL", "http://ollama:11434/v1"),
+                api_key=os.getenv("OLLAMA_API_KEY", "ollama"),
+            )
+            self.chat_model = os.getenv("OLLAMA_CHAT_MODEL", "llama3.2:1b")
+            self.embedding_model = os.getenv("OLLAMA_EMBEDDING_MODEL")
+        else:
+            self.client = OpenAI(
+                base_url=os.getenv("OPENAI_BASE_URL") or None,
+                api_key=os.getenv("OPENAI_API_KEY") or None,
+            )
+            self.chat_model = os.getenv("OPENAI_CHAT_MODEL", "gpt-4.1-mini")
+            self.embedding_model = os.getenv(
+                "OPENAI_EMBEDDING_MODEL",
+                "text-embedding-3-small",
+            )
 
-        self.chat_model = "gpt-4.1-mini"
-
-        self.embedding_model = "text-embedding-3-small"
+    def _load_json_response(self, content: str) -> dict:
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            start = content.find("{")
+            end = content.rfind("}")
+            if start == -1 or end == -1 or end <= start:
+                raise
+            return json.loads(content[start : end + 1])
 
     def generate_summary(self, text: str) -> str:
         """
@@ -82,9 +102,9 @@ class OpenAIService:
 
         prompt = CLASSIFICATION_PROMPT_TEMPLATE.format(ocr_text=text)
 
-        response = self.client.chat.completions.create(
-            model=self.chat_model,
-            messages=[
+        kwargs = {
+            "model": self.chat_model,
+            "messages": [
                 {
                     "role": "system",
                     "content": "You classify documents.",
@@ -94,13 +114,16 @@ class OpenAIService:
                     "content": prompt,
                 },
             ],
-            temperature=0,
-            response_format={"type": "json_object"},
-        )
+            "temperature": 0,
+        }
+        if self.provider != "ollama":
+            kwargs["response_format"] = {"type": "json_object"}
+
+        response = self.client.chat.completions.create(**kwargs)
 
         content = response.choices[0].message.content
 
-        return json.loads(content)
+        return self._load_json_response(content)
 
     def generate_tags(self, text: str) -> list:
         """
@@ -159,6 +182,9 @@ class OpenAIService:
         """
         Generate vector embedding for semantic search.
         """
+
+        if not self.embedding_model:
+            return None
 
         response = self.client.embeddings.create(
             model=self.embedding_model,

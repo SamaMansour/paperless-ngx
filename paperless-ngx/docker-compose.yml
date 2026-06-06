@@ -42,6 +42,11 @@ services:
       POSTGRES_DB: paperless
       POSTGRES_USER: paperless
       POSTGRES_PASSWORD: paperless
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollamadata:/root/.ollama
   webserver:
     build:
       context: ..
@@ -50,6 +55,7 @@ services:
     depends_on:
       - db
       - broker
+      - ollama
     ports:
       - "8000:8000"
     volumes:
@@ -61,8 +67,12 @@ services:
     environment:
       PAPERLESS_REDIS: redis://broker:6379
       PAPERLESS_DBHOST: db
+      AI_PROVIDER: ollama
+      OLLAMA_BASE_URL: http://ollama:11434/v1
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-llama3.2:1b}
 volumes:
   data:
   media:
   pgdata:
   redisdata:
+  ollamadata:
