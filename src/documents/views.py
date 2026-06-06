@@ -223,6 +223,7 @@ from documents.tasks import llmindex_index
 from documents.tasks import sanity_check
 from documents.tasks import train_classifier
 from documents.tasks import update_document_parent_tags
+from documents.tasks_ai import process_document_ai
 from documents.utils import get_boolean
 from documents.versioning import VersionResolutionError
 from documents.versioning import get_latest_version_for_root
@@ -660,6 +661,64 @@ class DocumentTypeViewSet(
     ordering_fields = ("name", "matching_algorithm", "match", "document_count")
 
 
+class DocumentAIProcessView(GenericAPIView):
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request, pk=None):
+        doc = get_object_or_404(Document.objects.select_related("owner"), pk=pk)
+        if request.user is not None and not has_perms_owner_aware(
+            request.user,
+            "change_document",
+            doc,
+        ):
+            return HttpResponseForbidden("Insufficient permissions")
+
+        task = process_document_ai.delay(doc.pk)
+        doc.ai_status = "queued"
+        doc.save(update_fields=["ai_status"])
+
+        return Response(
+            {
+                "status": doc.ai_status,
+                "task_id": task.id,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class DocumentAIStatusView(GenericAPIView):
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request, pk=None):
+        doc = get_object_or_404(
+            Document.objects.select_related("owner").prefetch_related("ai_tags"),
+            pk=pk,
+        )
+        if request.user is not None and not has_perms_owner_aware(
+            request.user,
+            "view_document",
+            doc,
+        ):
+            return HttpResponseForbidden("Insufficient permissions")
+
+        return Response(
+            {
+                "status": doc.ai_status,
+                "summary": doc.ai_summary,
+                "category": doc.ai_category,
+                "confidence": doc.ai_confidence,
+                "tags": [
+                    {
+                        "tag": ai_tag.tag,
+                        "confidence": ai_tag.confidence_score,
+                        "approved": ai_tag.approved,
+                    }
+                    for ai_tag in doc.ai_tags.all()
+                ],
+            },
+        )
+
+
 @extend_schema_serializer(
     component_name="EmailDocumentRequest",
     exclude_fields=("documents",),
@@ -869,6 +928,46 @@ class EmailDocumentDetailSchema(EmailSerializer):
                 },
             ),
             400: None,
+            403: None,
+            404: None,
+        },
+    ),
+    ai_process=extend_schema(
+        description="Trigger AI processing for the document",
+        responses={
+            202: inline_serializer(
+                name="AIProcess",
+                fields={
+                    "status": serializers.CharField(),
+                    "task_id": serializers.CharField(),
+                },
+            ),
+            403: None,
+            404: None,
+        },
+    ),
+    ai_status=extend_schema(
+        description="View AI processing status for the document",
+        responses={
+            200: inline_serializer(
+                name="AIStatus",
+                fields={
+                    "status": serializers.CharField(),
+                    "summary": serializers.CharField(allow_null=True),
+                    "category": serializers.CharField(allow_null=True),
+                    "confidence": serializers.FloatField(allow_null=True),
+                    "tags": serializers.ListField(
+                        child=inline_serializer(
+                            name="AIStatusTag",
+                            fields={
+                                "tag": serializers.CharField(),
+                                "confidence": serializers.FloatField(),
+                                "approved": serializers.BooleanField(),
+                            },
+                        ),
+                    ),
+                },
+            ),
             403: None,
             404: None,
         },
@@ -1535,6 +1634,68 @@ class DocumentViewSet(
         set_llm_suggestions_cache(doc.pk, resp_data, backend=ai_config.llm_backend)
 
         return Response(resp_data)
+
+    @action(
+        methods=["post"],
+        detail=True,
+        filter_backends=[],
+        url_path="ai-process",
+    )
+    def ai_process(self, request, pk=None):
+        doc = get_object_or_404(Document.objects.select_related("owner"), pk=pk)
+        if request.user is not None and not has_perms_owner_aware(
+            request.user,
+            "change_document",
+            doc,
+        ):
+            return HttpResponseForbidden("Insufficient permissions")
+
+        task = process_document_ai.delay(doc.pk)
+        doc.ai_status = "queued"
+        doc.save(update_fields=["ai_status"])
+
+        return Response(
+            {
+                "status": doc.ai_status,
+                "task_id": task.id,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @action(
+        methods=["get"],
+        detail=True,
+        filter_backends=[],
+        url_path="ai-status",
+    )
+    def ai_status(self, request, pk=None):
+        doc = get_object_or_404(
+            Document.objects.select_related("owner").prefetch_related("ai_tags"),
+            pk=pk,
+        )
+        if request.user is not None and not has_perms_owner_aware(
+            request.user,
+            "view_document",
+            doc,
+        ):
+            return HttpResponseForbidden("Insufficient permissions")
+
+        return Response(
+            {
+                "status": doc.ai_status,
+                "summary": doc.ai_summary,
+                "category": doc.ai_category,
+                "confidence": doc.ai_confidence,
+                "tags": [
+                    {
+                        "tag": ai_tag.tag,
+                        "confidence": ai_tag.confidence_score,
+                        "approved": ai_tag.approved,
+                    }
+                    for ai_tag in doc.ai_tags.all()
+                ],
+            },
+        )
 
     @action(methods=["get"], detail=True, filter_backends=[])
     @method_decorator(cache_control(no_cache=True))
