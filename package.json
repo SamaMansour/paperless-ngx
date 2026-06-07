@@ -1,0 +1,11 @@
+{
+	"dependencies": {
+		"@angular/common": "^22.0.0",
+		"@angular/core": "^22.0.0",
+		"@angular/forms": "^22.0.0",
+		"@angular/router": "^22.0.0",
+		"@ng-bootstrap/ng-bootstrap": "^20.0.0",
+		"ngx-bootstrap-icons": "^1.9.3",
+		"rxjs": "^7.8.2"
+	}
+}

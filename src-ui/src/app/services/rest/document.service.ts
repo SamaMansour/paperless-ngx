@@ -74,6 +74,25 @@ export interface DocumentSelectionQuery {
   filters?: { [key: string]: any }
 }
 
+export interface AiProcessResponse {
+  status: string
+  task_id: string
+}
+
+export interface AiStatusTag {
+  tag: string
+  confidence: number
+  approved: boolean
+}
+
+export interface AiStatusResponse {
+  status: string
+  summary: string | null
+  category: string | null
+  confidence: number | null
+  tags: AiStatusTag[]
+}
+
 @Injectable({
   providedIn: 'root',
 })
@@ -407,6 +426,19 @@ export class DocumentService extends AbstractPaperlessService<Document> {
   getAiSuggestions(id: number): Observable<DocumentSuggestions> {
     return this.http.get<DocumentSuggestions>(
       this.getResourceUrl(id, 'ai_suggestions')
+    )
+  }
+
+  processAi(id: number): Observable<AiProcessResponse> {
+    return this.http.post<AiProcessResponse>(
+      this.getResourceUrl(id, 'ai-process'),
+      {}
+    )
+  }
+
+  getAiStatus(id: number): Observable<AiStatusResponse> {
+    return this.http.get<AiStatusResponse>(
+      this.getResourceUrl(id, 'ai-status')
     )
   }
 

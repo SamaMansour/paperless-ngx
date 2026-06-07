@@ -21,7 +21,15 @@ import {
 import { dirtyCheck, DirtyComponent } from '@ngneat/dirty-check-forms'
 import { NgxBootstrapIconsModule } from 'ngx-bootstrap-icons'
 import { DeviceDetectorService } from 'ngx-device-detector'
-import { BehaviorSubject, Observable, of, Subject, timer } from 'rxjs'
+import {
+  BehaviorSubject,
+  forkJoin,
+  Observable,
+  of,
+  Subject,
+  throwError,
+  timer,
+} from 'rxjs'
 import {
   catchError,
   debounceTime,
@@ -30,6 +38,7 @@ import {
   first,
   map,
   switchMap,
+  take,
   takeUntil,
   tap,
 } from 'rxjs/operators'
@@ -75,6 +84,7 @@ import { CorrespondentService } from 'src/app/services/rest/correspondent.servic
 import { CustomFieldsService } from 'src/app/services/rest/custom-fields.service'
 import { DocumentTypeService } from 'src/app/services/rest/document-type.service'
 import {
+  AiStatusResponse,
   BulkEditSourceMode,
   DocumentService,
 } from 'src/app/services/rest/document.service'
@@ -153,7 +163,7 @@ interface IncomingDocumentUpdate {
   modified: string
 }
 
-@Component({
+const _DocumentDetailComponentMetadata = {
   selector: 'pngx-document-detail',
   templateUrl: './document-detail.component.html',
   styleUrls: ['./document-detail.component.scss'],
@@ -190,8 +200,8 @@ interface IncomingDocumentUpdate {
     PngxPdfViewerComponent,
     DocumentVersionDropdownComponent,
   ],
-})
-export class DocumentDetailComponent
+}
+class DocumentDetailComponentBase
   extends ComponentWithPermissions
   implements OnInit, OnDestroy, DirtyComponent
 {
@@ -237,6 +247,7 @@ export class DocumentDetailComponent
   metadata: DocumentMetadata
   suggestions: DocumentSuggestions
   suggestionsLoading: boolean = false
+  aiProcessing: boolean = false
   users: User[]
 
   title: string
@@ -312,6 +323,10 @@ export class DocumentDetailComponent
       setTimeout(() => this.nav?.select(DocumentDetailNavIDs.Details))
     }
   }
+  
+  export const DocumentDetailComponent = Component(_DocumentDetailComponentMetadata)(
+    DocumentDetailComponentBase
+  )
 
   DocumentDetailNavIDs = DocumentDetailNavIDs
   activeNavID: number
@@ -1004,6 +1019,202 @@ export class DocumentDetailComponent
           )
         },
       })
+  }
+
+  processAiAndAssign() {
+    if (!this.userCanEdit || this.aiProcessing) return
+
+    this.aiProcessing = true
+    this.networkActive = true
+    this.documentsService
+      .processAi(this.documentId)
+      .pipe(
+        switchMap(() =>
+          timer(0, 3000).pipe(
+            switchMap(() => this.documentsService.getAiStatus(this.documentId)),
+            take(41),
+            filter((status) =>
+              ['completed', 'failed'].includes(status.status)
+            ),
+            first()
+          )
+        ),
+        switchMap((status) => {
+          if (status.status !== 'completed') {
+            return throwError(() => new Error($localize`AI processing failed.`))
+          }
+          return this.assignAiResultToDocument(status)
+        }),
+        first(),
+        takeUntil(this.unsubscribeNotifier),
+        takeUntil(this.docChangeNotifier)
+      )
+      .subscribe({
+        next: (docValues) => {
+          this.closeIncomingUpdateModal()
+          this.lastLocalSaveModified = docValues.modified ?? null
+          this.documentForm.patchValue(docValues)
+          const newValues = Object.assign({}, this.documentForm.value)
+          newValues.tags = [...(docValues.tags ?? [])]
+          newValues.custom_fields = [...(docValues.custom_fields ?? [])]
+          this.store.next(newValues)
+          this.openDocumentService.setDirty(this.document, false)
+          this.openDocumentService.save()
+          this.openDocumentService.refreshDocument(this.documentId)
+          this.savedViewService.maybeRefreshDocumentCounts()
+          this.aiProcessing = false
+          this.networkActive = false
+          this.error = null
+          this.toastService.showInfo($localize`AI result assigned to document.`)
+        },
+        error: (error) => {
+          this.aiProcessing = false
+          this.networkActive = false
+          this.toastService.showError(
+            $localize`Error assigning AI result.`,
+            error
+          )
+        },
+      })
+  }
+
+  private assignAiResultToDocument(
+    status: AiStatusResponse
+  ): Observable<Document> {
+    const aiTagNames = this.cleanAiNames(
+      (status.tags ?? []).map((tag) => tag.tag)
+    ).slice(0, 8)
+
+    return forkJoin({
+      tagIds: this.ensureAiTags(aiTagNames),
+      documentTypeId: this.ensureAiDocumentType(status.category),
+    }).pipe(
+      switchMap(({ tagIds, documentTypeId }) => {
+        const currentTagIds: number[] =
+          this.documentForm.get('tags').value ?? this.document?.tags ?? []
+        const patch: Document = {
+          id: this.documentId,
+          tags: [...new Set([...currentTagIds, ...tagIds])],
+        } as Document
+
+        if (documentTypeId) {
+          patch.document_type = documentTypeId
+        }
+
+        return this.documentsService.patch(patch, this.selectedVersionId)
+      })
+    )
+  }
+
+  private ensureAiTags(tagNames: string[]): Observable<number[]> {
+    if (
+      !tagNames.length ||
+      !this.permissionsService.currentUserCan(
+        PermissionAction.View,
+        PermissionType.Tag
+      )
+    ) {
+      return of([])
+    }
+
+    return this.tagService.listAll().pipe(
+      switchMap((tags) => {
+        const existingTags = tags.results
+        const createRequests = tagNames
+          .filter(
+            (name) =>
+              !existingTags.some(
+                (tag) => tag.name.toLowerCase() === name.toLowerCase()
+              )
+          )
+          .filter(
+            () =>
+              !this.createDisabled(DataType.Tag) &&
+              this.permissionsService.currentUserCan(
+                PermissionAction.Add,
+                PermissionType.Tag
+              )
+          )
+          .map((name) => this.tagService.create({ name } as Tag))
+
+        return createRequests.length
+          ? forkJoin(createRequests).pipe(
+              switchMap(() => this.tagService.listAll())
+            )
+          : of(tags)
+      }),
+      tap((tags) => {
+        if (this.tagsInput) this.tagsInput.tags = tags.results
+      }),
+      map((tags: { results: any[] }) =>
+        tagNames
+          .map(
+            (name) =>
+              tags.results.find(
+                (tag) => tag.name.toLowerCase() === name.toLowerCase()
+              )?.id
+          )
+          .filter((id): id is number => !!id)
+      )
+    )
+  }
+
+  private ensureAiDocumentType(
+    category: string | null
+  ): Observable<number | null> {
+    const documentTypeName = category?.trim()
+    if (
+      !documentTypeName ||
+      documentTypeName.toLowerCase() === 'other' ||
+      !this.permissionsService.currentUserCan(
+        PermissionAction.View,
+        PermissionType.DocumentType
+      )
+    ) {
+      return of(null)
+    }
+
+    return this.documentTypeService.listAll().pipe(
+      switchMap((documentTypes) => {
+        const existingDocumentType = documentTypes.results.find(
+          (documentType) =>
+            documentType.name.toLowerCase() === documentTypeName.toLowerCase()
+        )
+        if (existingDocumentType) return of(existingDocumentType.id)
+        if (this.createDisabled(DataType.DocumentType)) return of(null)
+
+        return this.documentTypeService
+          .create({ name: documentTypeName } as DocumentType)
+          .pipe(
+            switchMap(() => this.documentTypeService.listAll()),
+            tap((updatedDocumentTypes) => {
+              this.documentTypes = updatedDocumentTypes.results
+            }),
+            map(
+              (updatedDocumentTypes) =>
+                updatedDocumentTypes.results.find(
+                  (documentType) =>
+                    documentType.name.toLowerCase() ===
+                    documentTypeName.toLowerCase()
+                )?.id ?? null
+            )
+          )
+      }),
+      tap(() => {
+        this.suggestions = null
+      })
+    )
+  }
+
+  private cleanAiNames(names: string[]): string[] {
+    return [
+      ...new Map(
+        names
+          .map((name) => name?.trim())
+          .filter((name): name is string => !!name)
+          .map((name) => [name.toLowerCase(), name])
+      ).values(),
+    ]
   }
 
   createTag(newName: string) {

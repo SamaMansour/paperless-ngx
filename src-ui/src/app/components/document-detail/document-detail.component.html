@@ -129,7 +129,7 @@
         <ng-container *pngxIfPermissions="{ action: PermissionAction.Change, type: PermissionType.Document }">
           <div class="btn-group pb-3 ms-auto">
             <pngx-suggestions-dropdown *pngxIfPermissions="{ action: PermissionAction.Change, type: PermissionType.Document }"
-              [disabled]="!userCanEdit || suggestionsLoading"
+              [disabled]="!userCanEdit || suggestionsLoading || aiProcessing"
               [loading]="suggestionsLoading"
               [suggestions]="suggestions"
               [aiEnabled]="aiEnabled"
@@ -138,6 +138,14 @@
               (addDocumentType)="createDocumentType($event)"
               (addCorrespondent)="createCorrespondent($event)">
             </pngx-suggestions-dropdown>
+            <button type="button" class="btn btn-sm btn-outline-secondary" i18n-title title="Run AI and assign" (click)="processAiAndAssign()" [disabled]="!userCanEdit || aiProcessing">
+              @if (aiProcessing) {
+                <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+              } @else {
+                <i-bs width="1.1em" height="1.1em" name="magic"></i-bs>
+              }
+              <span class="d-none d-xl-inline ms-1" i18n>AI apply</span>
+            </button>
           </div>
 
           <div class="btn-group pb-3 ms-2">
