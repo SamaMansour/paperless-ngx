@@ -138,13 +138,13 @@
               (addDocumentType)="createDocumentType($event)"
               (addCorrespondent)="createCorrespondent($event)">
             </pngx-suggestions-dropdown>
-            <button type="button" class="btn btn-sm btn-outline-secondary" i18n-title title="Run AI and assign" (click)="processAiAndAssign()" [disabled]="!userCanEdit || aiProcessing">
+            <button type="button" class="btn btn-sm btn-outline-secondary" i18n-title title="Run AI and assign tags" (click)="processAiAndAssign()" [disabled]="!userCanEdit || aiProcessing">
               @if (aiProcessing) {
                 <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
               } @else {
-                <i-bs width="1.1em" height="1.1em" name="magic"></i-bs>
+                <i-bs width="1.1em" height="1.1em" name="stars"></i-bs>
               }
-              <span class="d-none d-xl-inline ms-1" i18n>AI apply</span>
+              <span class="ms-1" i18n>AI tag</span>
             </button>
           </div>
 

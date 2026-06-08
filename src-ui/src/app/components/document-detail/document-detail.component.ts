@@ -23,7 +23,6 @@ import { NgxBootstrapIconsModule } from 'ngx-bootstrap-icons'
 import { DeviceDetectorService } from 'ngx-device-detector'
 import {
   BehaviorSubject,
-  forkJoin,
   Observable,
   of,
   Subject,
@@ -84,7 +83,6 @@ import { CorrespondentService } from 'src/app/services/rest/correspondent.servic
 import { CustomFieldsService } from 'src/app/services/rest/custom-fields.service'
 import { DocumentTypeService } from 'src/app/services/rest/document-type.service'
 import {
-  AiStatusResponse,
   BulkEditSourceMode,
   DocumentService,
 } from 'src/app/services/rest/document.service'
@@ -201,7 +199,8 @@ const _DocumentDetailComponentMetadata = {
     DocumentVersionDropdownComponent,
   ],
 }
-class DocumentDetailComponentBase
+@Component(_DocumentDetailComponentMetadata)
+export class DocumentDetailComponent
   extends ComponentWithPermissions
   implements OnInit, OnDestroy, DirtyComponent
 {
@@ -323,11 +322,6 @@ class DocumentDetailComponentBase
       setTimeout(() => this.nav?.select(DocumentDetailNavIDs.Details))
     }
   }
-  
-  export const DocumentDetailComponent = Component(_DocumentDetailComponentMetadata)(
-    DocumentDetailComponentBase
-  )
-
   DocumentDetailNavIDs = DocumentDetailNavIDs
   activeNavID: number
 
@@ -1043,7 +1037,7 @@ class DocumentDetailComponentBase
           if (status.status !== 'completed') {
             return throwError(() => new Error($localize`AI processing failed.`))
           }
-          return this.assignAiResultToDocument(status)
+          return this.documentsService.get(this.documentId)
         }),
         first(),
         takeUntil(this.unsubscribeNotifier),
@@ -1076,145 +1070,6 @@ class DocumentDetailComponentBase
           )
         },
       })
-  }
-
-  private assignAiResultToDocument(
-    status: AiStatusResponse
-  ): Observable<Document> {
-    const aiTagNames = this.cleanAiNames(
-      (status.tags ?? []).map((tag) => tag.tag)
-    ).slice(0, 8)
-
-    return forkJoin({
-      tagIds: this.ensureAiTags(aiTagNames),
-      documentTypeId: this.ensureAiDocumentType(status.category),
-    }).pipe(
-      switchMap(({ tagIds, documentTypeId }) => {
-        const currentTagIds: number[] =
-          this.documentForm.get('tags').value ?? this.document?.tags ?? []
-        const patch: Document = {
-          id: this.documentId,
-          tags: [...new Set([...currentTagIds, ...tagIds])],
-        } as Document
-
-        if (documentTypeId) {
-          patch.document_type = documentTypeId
-        }
-
-        return this.documentsService.patch(patch, this.selectedVersionId)
-      })
-    )
-  }
-
-  private ensureAiTags(tagNames: string[]): Observable<number[]> {
-    if (
-      !tagNames.length ||
-      !this.permissionsService.currentUserCan(
-        PermissionAction.View,
-        PermissionType.Tag
-      )
-    ) {
-      return of([])
-    }
-
-    return this.tagService.listAll().pipe(
-      switchMap((tags) => {
-        const existingTags = tags.results
-        const createRequests = tagNames
-          .filter(
-            (name) =>
-              !existingTags.some(
-                (tag) => tag.name.toLowerCase() === name.toLowerCase()
-              )
-          )
-          .filter(
-            () =>
-              !this.createDisabled(DataType.Tag) &&
-              this.permissionsService.currentUserCan(
-                PermissionAction.Add,
-                PermissionType.Tag
-              )
-          )
-          .map((name) => this.tagService.create({ name } as Tag))
-
-        return createRequests.length
-          ? forkJoin(createRequests).pipe(
-              switchMap(() => this.tagService.listAll())
-            )
-          : of(tags)
-      }),
-      tap((tags) => {
-        if (this.tagsInput) this.tagsInput.tags = tags.results
-      }),
-      map((tags: { results: any[] }) =>
-        tagNames
-          .map(
-            (name) =>
-              tags.results.find(
-                (tag) => tag.name.toLowerCase() === name.toLowerCase()
-              )?.id
-          )
-          .filter((id): id is number => !!id)
-      )
-    )
-  }
-
-  private ensureAiDocumentType(
-    category: string | null
-  ): Observable<number | null> {
-    const documentTypeName = category?.trim()
-    if (
-      !documentTypeName ||
-      documentTypeName.toLowerCase() === 'other' ||
-      !this.permissionsService.currentUserCan(
-        PermissionAction.View,
-        PermissionType.DocumentType
-      )
-    ) {
-      return of(null)
-    }
-
-    return this.documentTypeService.listAll().pipe(
-      switchMap((documentTypes) => {
-        const existingDocumentType = documentTypes.results.find(
-          (documentType) =>
-            documentType.name.toLowerCase() === documentTypeName.toLowerCase()
-        )
-        if (existingDocumentType) return of(existingDocumentType.id)
-        if (this.createDisabled(DataType.DocumentType)) return of(null)
-
-        return this.documentTypeService
-          .create({ name: documentTypeName } as DocumentType)
-          .pipe(
-            switchMap(() => this.documentTypeService.listAll()),
-            tap((updatedDocumentTypes) => {
-              this.documentTypes = updatedDocumentTypes.results
-            }),
-            map(
-              (updatedDocumentTypes) =>
-                updatedDocumentTypes.results.find(
-                  (documentType) =>
-                    documentType.name.toLowerCase() ===
-                    documentTypeName.toLowerCase()
-                )?.id ?? null
-            )
-          )
-      }),
-      tap(() => {
-        this.suggestions = null
-      })
-    )
-  }
-
-  private cleanAiNames(names: string[]): string[] {
-    return [
-      ...new Map(
-        names
-          .map((name) => name?.trim())
-          .filter((name): name is string => !!name)
-          .map((name) => [name.toLowerCase(), name])
-      ).values(),
-    ]
   }
 
   createTag(newName: string) {
