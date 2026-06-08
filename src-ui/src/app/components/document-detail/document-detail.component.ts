@@ -161,7 +161,7 @@ interface IncomingDocumentUpdate {
   modified: string
 }
 
-const _DocumentDetailComponentMetadata = {
+@Component({
   selector: 'pngx-document-detail',
   templateUrl: './document-detail.component.html',
   styleUrls: ['./document-detail.component.scss'],
@@ -198,8 +198,7 @@ const _DocumentDetailComponentMetadata = {
     PngxPdfViewerComponent,
     DocumentVersionDropdownComponent,
   ],
-}
-@Component(_DocumentDetailComponentMetadata)
+})
 export class DocumentDetailComponent
   extends ComponentWithPermissions
   implements OnInit, OnDestroy, DirtyComponent
