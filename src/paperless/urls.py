@@ -22,6 +22,8 @@ from documents.views import ChatStreamingView
 from documents.views import CorrespondentViewSet
 from documents.views import CustomFieldViewSet
 from documents.views import DeleteDocumentsView
+from documents.views import DocumentAIProcessView
+from documents.views import DocumentAIStatusView
 from documents.views import DocumentTypeViewSet
 from documents.views import EditPdfDocumentsView
 from documents.views import GlobalSearchView
@@ -196,6 +198,16 @@ urlpatterns = [
                                 "^chat/",
                                 ChatStreamingView.as_view(),
                                 name="chat_streaming_view",
+                            ),
+                            re_path(
+                                r"^(?P<pk>[^/.]+)/ai-process/?$",
+                                DocumentAIProcessView.as_view(),
+                                name="document-ai-process",
+                            ),
+                            re_path(
+                                r"^(?P<pk>[^/.]+)/ai-status/?$",
+                                DocumentAIStatusView.as_view(),
+                                name="document-ai-status",
                             ),
                         ],
                     ),

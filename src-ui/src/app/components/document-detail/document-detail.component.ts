@@ -21,7 +21,14 @@ import {
 import { dirtyCheck, DirtyComponent } from '@ngneat/dirty-check-forms'
 import { NgxBootstrapIconsModule } from 'ngx-bootstrap-icons'
 import { DeviceDetectorService } from 'ngx-device-detector'
-import { BehaviorSubject, Observable, of, Subject, timer } from 'rxjs'
+import {
+  BehaviorSubject,
+  Observable,
+  of,
+  Subject,
+  throwError,
+  timer,
+} from 'rxjs'
 import {
   catchError,
   debounceTime,
@@ -30,6 +37,7 @@ import {
   first,
   map,
   switchMap,
+  take,
   takeUntil,
   tap,
 } from 'rxjs/operators'
@@ -237,6 +245,7 @@ export class DocumentDetailComponent
   metadata: DocumentMetadata
   suggestions: DocumentSuggestions
   suggestionsLoading: boolean = false
+  aiProcessing: boolean = false
   users: User[]
 
   title: string
@@ -312,7 +321,6 @@ export class DocumentDetailComponent
       setTimeout(() => this.nav?.select(DocumentDetailNavIDs.Details))
     }
   }
-
   DocumentDetailNavIDs = DocumentDetailNavIDs
   activeNavID: number
 
@@ -1000,6 +1008,63 @@ export class DocumentDetailComponent
           this.suggestionsLoading = false
           this.toastService.showError(
             $localize`Error retrieving suggestions.`,
+            error
+          )
+        },
+      })
+  }
+
+  processAiAndAssign() {
+    if (!this.userCanEdit || this.aiProcessing) return
+
+    this.aiProcessing = true
+    this.networkActive = true
+    this.documentsService
+      .processAi(this.documentId)
+      .pipe(
+        switchMap(() =>
+          timer(0, 3000).pipe(
+            switchMap(() => this.documentsService.getAiStatus(this.documentId)),
+            take(41),
+            filter((status) =>
+              ['completed', 'failed'].includes(status.status)
+            ),
+            first()
+          )
+        ),
+        switchMap((status) => {
+          if (status.status !== 'completed') {
+            return throwError(() => new Error($localize`AI processing failed.`))
+          }
+          return this.documentsService.get(this.documentId)
+        }),
+        first(),
+        takeUntil(this.unsubscribeNotifier),
+        takeUntil(this.docChangeNotifier)
+      )
+      .subscribe({
+        next: (docValues) => {
+          this.closeIncomingUpdateModal()
+          this.lastLocalSaveModified = docValues.modified ?? null
+          this.documentForm.patchValue(docValues)
+          const newValues = Object.assign({}, this.documentForm.value)
+          newValues.tags = [...(docValues.tags ?? [])]
+          newValues.custom_fields = [...(docValues.custom_fields ?? [])]
+          this.store.next(newValues)
+          this.openDocumentService.setDirty(this.document, false)
+          this.openDocumentService.save()
+          this.openDocumentService.refreshDocument(this.documentId)
+          this.savedViewService.maybeRefreshDocumentCounts()
+          this.aiProcessing = false
+          this.networkActive = false
+          this.error = null
+          this.toastService.showInfo($localize`AI result assigned to document.`)
+        },
+        error: (error) => {
+          this.aiProcessing = false
+          this.networkActive = false
+          this.toastService.showError(
+            $localize`Error assigning AI result.`,
             error
           )
         },
